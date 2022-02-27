@@ -1,5 +1,6 @@
 import argparse
 from itertools import count
+import pdb
 
 import gym
 import gym.spaces
@@ -30,13 +31,15 @@ import numpy as np
 
 
 import time
+import sys
+sys.path.append('../all_envs')
 
 import swimmer
-import reacher
-import ant
+# import reacher
+# import ant
 import walker
 import halfcheetah
-import inverted_double_pendulum
+# import inverted_double_pendulum
 
 import pickle
 
@@ -100,7 +103,7 @@ else:
 
 
 if 'Swimmer' in args.env_name or 'Walker' in args.env_name or 'HalfCheetah' in args.env_name:
-    env = gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False)
+    env = gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False) # ?
     f_env = gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False)
 else:
     env = gym.make(args.env_name, xml_file=args.xml)
@@ -123,9 +126,11 @@ def load_demos(demo_files, ratios):
         use_num = int(len(raw_demos['obs'])*ratios[i])
         current_state = raw_demos['obs'][0:use_num]
         next_state = raw_demos['next_obs'][0:use_num]
+        # s_t0, s_t1, s_t2, ...
         trajs += [np.array(traj) for traj in current_state]
         if 'InvertedDoublePendulum' in str(type(env.env)):
             init_obs += raw_demos['init_obs']
+        # 0 0 0 ..., 1 1 1, ..., 2,2,2, ...
         traj_traj_id += [i]*len(current_state)
         for j in range(len(current_state)):
             if 'Ant' in args.env_name:
@@ -171,7 +176,7 @@ def compute_feasibility_pair(expert_trajs, models, f_env):
 
 def compute_feasibility_traj(expert_trajs, traj_traj_id, models, f_env, init_obs):
     all_distance = []
-    for index in range(len(expert_trajs)):
+    for index in range(len(expert_trajs)): # 4 domains
         all_distance.append([])
         expert_traj = expert_trajs[index]
         model = models[traj_traj_id[index]]
@@ -184,9 +189,11 @@ def compute_feasibility_traj(expert_trajs, traj_traj_id, models, f_env, init_obs
             state0 = expert_traj[0]
             state = expert_traj[0]
             for j in range(expert_traj.shape[0]-1):
+                # model has a different action space, so the [states] is different from expert
                 action = model.sample_actions(np.concatenate([state, state0], axis=0), temperature=0.0)
                 next_state, _, _, _ = f_env.step(action)
                 state = next_state
+                # discounted L2-loss as distance
                 all_distance[-1].append(np.linalg.norm(expert_traj[j+1] - next_state, ord=2, axis=0)*(args.discount**j))
         all_distance[-1] = np.sum(all_distance[-1])
     all_distance = np.array(all_distance)
@@ -200,6 +207,7 @@ if args.feasibility_model is not None:
     agents = []
     model_dict = torch.load(args.feasibility_model)
     print(model_dict.keys())
+    pdb.set_trace()
     for i in range(len(model_dict)):
         agents.append(model_dict['policy_'+str(i)])
     feasibility_traj = compute_feasibility_traj(expert_trajs, traj_traj_id, agents, f_env, init_obs)
@@ -312,14 +320,14 @@ def evaluate(episode, best_reward, log_file):
     if best_reward < avg_reward / args.eval_epochs:
         best_reward = avg_reward / args.eval_epochs
         torch.save({'policy':policy_net.state_dict(), 'value':value_net.state_dict(), 'rew':best_reward}, save_path)
-
+pdb.set_trace()
 all_idx = np.arange(0, expert_traj.shape[0])
 p_idx = np.random.permutation(expert_traj.shape[0])
 expert_traj = expert_traj[p_idx, :]
 feasibility = feasibility[p_idx]
 
 feasibility = feasibility / (np.sum(feasibility)+0.0000001)
-feasibility[0] = 1-np.sum(feasibility[1:])
+feasibility[0] = 1 - np.sum(feasibility[1:])
 
 best_reward = -1000000
 

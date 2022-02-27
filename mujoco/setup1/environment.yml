@@ -1,4 +1,4 @@
-name: jax-sac
+name: rl
 channels:
   - defaults
 dependencies:
@@ -20,4 +20,5 @@ dependencies:
     - imageio-ffmpeg
     - git+https://github.com/rail-berkeley/d4rl@master#egg=d4rl
     - git+git://github.com/denisyarats/dmc2gym.git
-prefix: $HOME/anaconda3
+prefix: /workspace2/qiuyiwen/anaconda3
+

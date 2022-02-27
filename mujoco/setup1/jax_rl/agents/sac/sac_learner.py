@@ -1,5 +1,6 @@
 """Implementations of algorithms for continuous control."""
 
+import pdb
 from typing import Optional, Sequence, Tuple
 
 import flax
@@ -54,10 +55,13 @@ class SACLearner(object):
         self.tau = tau
         self.target_update_period = target_update_period
         self.discount = discount
-
+        
+        # pdb.set_trace()
         rng = jax.random.PRNGKey(seed)
         rng, actor_key, critic_key, temp_key = jax.random.split(rng, 4)
 
+        # One actor model and two critic model?
+        # [creat_model] means model + params?
         actor = create_model(
             policies.NormalTanhPolicy(hidden_dims, action_dim),
             [actor_key, observations])
@@ -74,6 +78,7 @@ class SACLearner(object):
                             [temp_key])
         temp = temp.with_optimizer(flax.optim.Adam(learning_rate=temp_lr))
 
+        # sac have 5 params: actor, 2 * critic, temp, rng?
         self.sac = ActorCriticTemp(actor=actor,
                                    critic=critic,
                                    target_critic=target_critic,

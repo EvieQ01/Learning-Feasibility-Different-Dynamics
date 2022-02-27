@@ -13,7 +13,7 @@ def update(sac: ActorCriticTemp,
     rng, key = jax.random.split(sac.rng)
 
     def actor_loss_fn(actor_params: Params) -> Tuple[jnp.ndarray, InfoDict]:
-        dist = sac.actor.apply({'params': actor_params}, batch.observations)
+        dist = sac.actor.apply({'params': actor_params}, batch.observations) # action distribution of s, ie.e \pi(a | s)
         actions = dist.sample(seed=key)
         log_probs = dist.log_prob(actions)
         q1, q2 = sac.critic(batch.observations, actions)
@@ -24,6 +24,7 @@ def update(sac: ActorCriticTemp,
             'entropy': -log_probs.mean()
         }
 
+    # apply_gradient == step
     new_actor, info = sac.actor.apply_gradient(actor_loss_fn)
 
     new_sac = sac.replace(actor=new_actor, rng=rng)

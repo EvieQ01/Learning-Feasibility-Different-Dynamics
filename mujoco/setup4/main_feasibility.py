@@ -1,3 +1,5 @@
+import sys
+sys.path.append("../all_envs")
 import argparse
 from itertools import count
 
@@ -63,6 +65,7 @@ def load_demos(demo_files, ratio):
     all_demos = []
     all_init_obs = []
     for demo_file in demo_files:
+        print("load demo: "+demo_file)
         raw_demos = pickle.load(open(demo_file, 'rb'))
         use_num = int(len(raw_demos['obs'])*ratio)
         all_demos = all_demos + raw_demos['obs'][:use_num]
@@ -240,7 +243,7 @@ for i_episode in count(1):
                 best_reward_list[test_demo_id] = np.mean(all_reward)
                 save_model_dict['policy_'+str(test_demo_id)] = policy_nets[test_demo_id].state_dict()
             print('best reward', test_demo_id, ' ', best_reward_list[test_demo_id])
-        torch.save(save_model_dict, args.save_path + 'seed_{}'.format(args.seed))
+        torch.save(save_model_dict, args.save_path + '_setup4_seed_{}'.format(args.seed))
         
     memory_list = [Memory() for i in range(len(demos))]
     

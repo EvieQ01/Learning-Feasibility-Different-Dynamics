@@ -24,6 +24,7 @@ class NormalTanhPolicy(nn.Module):
                  temperature: float = 1.0) -> tfd.TransformedDistribution:
         outputs = MLP(self.hidden_dims, activate_final=True)(observations)
 
+        #Dense 是？ action_dim?
         means = nn.Dense(self.action_dim,
                          kernel_init=default_init(1e-3))(outputs)
 
@@ -33,11 +34,14 @@ class NormalTanhPolicy(nn.Module):
         else:
             log_stds = Parameter(shape=(self.action_dim, ))()
 
+        # log
         log_stds = jnp.clip(log_stds, -20.0, 2.0)
 
+        # 多元正态分布 multivariate normal distribution
         base_dist = tfd.MultivariateNormalDiag(loc=means,
                                                scale_diag=jnp.exp(log_stds) *
                                                temperature)
+        # models p(y) given a base distribution p(x), Y = g(X)
         return tfd.TransformedDistribution(distribution=base_dist,
                                            bijector=tfb.Tanh())
 

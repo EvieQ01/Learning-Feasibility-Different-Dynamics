@@ -12,6 +12,9 @@ python main_feasibility.py --save_path checkpoints/swimmer_feasibility_setup --d
 
 ```
 python main_feasibility.py --save_path checkpoints/walker2d_feasibility_setup2 --demo_files ../demo/walker2d_0.7/batch_00.pkl ../demo/walker2d_1.1/batch_00.pkl ../demo/walker2d_19.9/batch_00.pkl ../demo/walker2d_29.9/batch_00.pkl --test_demo_files ../demo/walker2d_0.7/batch_00.pkl ../demo/walker2d_1.1/batch_00.pkl ../demo/walker2d_19.9/batch_00.pkl ../demo/walker2d_29.9/batch_00.pkl --xml walker2d.xml  --env-name CustomWalker2dFeasibility-v0 --ratio 0.02 0.02 0.02 0.02 --mode traj --discount_train --batch-size 25000
+
+# 19.9 9.9 0.9 0.7 ->24.9
+python main_feasibility.py --save_path checkpoints/walker2d_feasibility_setup2 --demo_files ../demo/walker2d_19.9/batch_00.pkl ../demo/walker2d_9.9/batch_00.pkl ../demo/walker2d/batch_00.pkl ../demo/walker2d_0.7/batch_00.pkl --test_demo_files ../demo/walker2d_19.9/batch_00.pkl ../demo/walker2d_9.9/batch_00.pkl ../demo/walker2d/batch_00.pkl ../demo/walker2d_0.7/batch_00.pkl --xml walker2d_24.9.xml  --env-name CustomWalker2dFeasibility-v0 --ratio 0.02 0.02 0.02 0.02 --mode traj --discount_train --batch-size 25000
 ```
 
 ### HalfCheetah Setup1
