@@ -1,10 +1,12 @@
+import random
 import argparse
 from ast import Global
 from dis import dis
 from glob import glob
 from itertools import count
 from math import dist
-
+from logger import *
+import json
 import gym
 from matplotlib.pyplot import axis
 import scipy.optimize
@@ -23,8 +25,7 @@ import numpy as np
 import pickle
 import random
 import copy
-
-# import ant
+from sklearn.cluster import KMeans# import ant
 # import swimmer
 # import reacher
 # import walker
@@ -67,7 +68,12 @@ parser.add_argument('--algo', default='sac', help='the algorithm of RL')
 parser.add_argument('--max_steps', type=int, default=int(1e6), help='the maximum number of steps')
 parser.add_argument('--start_training', type=int, default=int(1e4), help='Number of training steps to start training.')
 args = parser.parse_args()
+logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0] + 'resplit')
+# re-define datasets
 
+json.dump(vars(args), logger.get_args_file(), sort_keys=True, indent=4)
+
+target_env_name = os.path.splitext(args.xml)[0]
 def load_demos(demo_files, ratio):
     all_demos = []
     all_init_obs = []
@@ -146,6 +152,7 @@ def greedy_independ(Graph):
     global bestx # list
     degree_mat = np.sum(Graph, axis=-1)
     degree_mat = np.where(degree_mat==0, 10000, degree_mat)
+    # pdb.set_trace()
     x = degree_mat.argmin()
     bestn += 1
     bestx[x] = 1
@@ -216,18 +223,17 @@ def greedy_independ(Graph):
 #         save_demo_path = '../demo/walker2d/re_split_{}_batch_00.pkl'.format(i)
 #         raw_demos['obs'] = [demos_all[idx] for idx in split_clique[i]]
 #         pickle.dump(raw_demos, open(save_demo_path, 'wb'))
-
 def re_split_demos(demos_all):
     size = len(demos_all)
     traj_len = len(demos_all[0])
     # pdb.set_trace()
     dist_matrix = np.zeros((size, size)) # 200 * 200
-    look_1 = np.expand_dims(np.array(demos_all), axis=0) # 1 * 200 * 1000 * 18
-    look_2 = np.expand_dims(np.array(demos_all), axis=1) # 200 * 1 * 1000 * 18
+    look_1 = np.expand_dims(np.array(demos_all_normed), axis=0) # 1 * 200 * 1000 * 18
+    look_2 = np.expand_dims(np.array(demos_all_normed), axis=1) # 200 * 1 * 1000 * 18
     # dist_matrix = np.sum(abs(look_1 - look_2), axis=-1)  # 200 * 200 * 1000
     dist_matrix = np.linalg.norm(look_1 - look_2, axis=-1)
     dist_matrix = np.mean(dist_matrix, axis=-1)
-    save_dist_path = '../demo/walker2d/dist_matrix.pkl'
+    save_dist_path = os.path.join('../demo', target_env_name,'dist_matrix.pkl')
     pickle.dump(dist_matrix, open(save_dist_path, 'wb'))
    # for i in range(size):
     #     for j in range(size):
@@ -236,7 +242,7 @@ def re_split_demos(demos_all):
     # # clique
     # graph_matrix = dist_matrix < (dist_matrix.mean() * 1.1)
     # independent
-    graph_matrix = dist_matrix > (dist_matrix.mean() * 1.)
+    graph_matrix = dist_matrix < (dist_matrix.mean() * 1.)
     print("sample graph:", graph_matrix[0])
     graph_matrix = graph_matrix.astype(int)
     split_clique=[]
@@ -266,23 +272,42 @@ def re_split_demos(demos_all):
         # print(bestx, bestn)
         # find one independent set(approximately)
         clique = [i for i, x in enumerate(bestx) if x == 1]
-        if len(clique) > int(0.05 * size):
+        if len(clique) > int(0.2 * size):
             split_clique.append(clique)
         print('re_cluster id:', split_clique)
         # to contain more nodes
-        graph_memory = (dist_matrix > (dist_matrix.mean() * (1. + 0.1 * decay_step))).astype(int)
+        graph_memory = (dist_matrix < (dist_matrix.mean() * (1. - 0.05 * decay_step))).astype(int)
         update_graph(G=graph_memory, nodes_to_delete=[x for clique in split_clique for x in clique])
         # check if all the demos have been selected
         all_clear = is_all_clear(graph_memory)
         # pdb.set_trace()
-
+    print("total rounds:{}".format(decay_step))
     # pdb.set_trace()
     # save new demo clique
+
+    # evaluate
+    temp = []
+    for i in range(len(split_clique)):
+        temp.append([demos_all_normed[idx] for idx in split_clique[i]])
+    evaluate_cluster_within(temp)
+    # evaluate cluster 0 & 1
+    evaluate_cluster_between([demos_all_normed[idx] for idx in split_clique[0]], [demos_all_normed[idx] for idx in split_clique[1]])
     raw_demos = {}
     for i in range(len(split_clique)):
-        save_demo_path = '../demo/walker2d/re_split_{}_batch_00.pkl'.format(i)
+        save_demo_path = '../demo/' + target_env_name + '/re_split_far_{}_batch_00.pkl'.format(i)
         raw_demos['obs'] = [demos_all[idx] for idx in split_clique[i]]
         pickle.dump(raw_demos, open(save_demo_path, 'wb'))
+        print("=>save cluster {}: {} traj".format(i, len(raw_demos['obs'])))
+
+def random_split_demo(demos, cluster_num=4):
+    size = len(demos) // cluster_num
+    random.shuffle(demos)
+    raw_demos = {}
+    for i in range(cluster_num):
+        save_demo_path = '../demo/' + target_env_name + '/re_split_random_{}_batch_00.pkl'.format(i)
+        raw_demos['obs'] = [demos_all[idx + size * i] for idx in range(size)]
+        pickle.dump(raw_demos, open(save_demo_path, 'wb'))
+        print("=>save cluster {}: {} traj".format(i, len(raw_demos['obs'])))
 
 # return a list of neigjbor of x (including self)
 def find_neighbor_x(node_id, Graph):
@@ -299,6 +324,31 @@ def calculate_traj_dist(traj1, traj2):
     for i in range(steps):
         diff[i] = abs(np.linalg.norm(traj1[i] - traj2[i], ord=2))
     return np.min(diff)
+
+def evaluate_cluster_within(trajs): # shape: n_domain * x * 1000 * 18
+    min_within_traj = []
+    max_within_traj = []
+    # pdb.set_trace()
+    for domain_trajs in trajs:
+        look_1 = np.expand_dims(np.array(domain_trajs), axis=0) # 1 * x * 1000 * 18
+        look_2 = np.expand_dims(np.array(domain_trajs), axis=1) # x * 1 * 1000 * 18
+        dist_matrix = np.linalg.norm(look_1 - look_2, axis=-1)  # 
+        dist_matrix = np.mean(dist_matrix, axis=-1) # x * x
+        dist_matrix[np.arange(dist_matrix.shape[0]), np.arange(dist_matrix.shape[0])] = 10000 
+        min_within_traj.append(np.min(dist_matrix)) # to get min of traj i&j
+        dist_matrix[np.arange(dist_matrix.shape[0]), np.arange(dist_matrix.shape[0])] = 0
+        max_within_traj.append(np.max(dist_matrix)) # to get max of traj i&j
+    print('min_within_traj: ', min_within_traj)
+    print('max_within_traj: ', max_within_traj)
+
+def evaluate_cluster_between(trajs1, trajs2):
+    look_1 = np.expand_dims(np.array(trajs1), axis=0) # 1 * a * 1000 * 18
+    look_2 = np.expand_dims(np.array(trajs2), axis=1) # b * 1 * 1000 * 18
+    dist_matrix = np.linalg.norm(look_1 - look_2, axis=-1)  # 
+    dist_matrix = np.mean(dist_matrix, axis=-1) # b * a
+    # dist_matrix[np.arange(dist_matrix.shape[0]), np.arange(dist_matrix.shape[0])] = 10000 
+    print('min_between_traj: ', np.min(dist_matrix))
+    print('max_between_traj: ', np.max(dist_matrix))
 # main
 if args.mode == 'pair':
     demos = [load_pairs(args.demo_files[i:i+1], args.ratio[i]) for i in range(len(args.test_demo_files))]
@@ -318,10 +368,18 @@ for i in range(len(demos_all)):
 # pdb.set_trace()
 for i in reversed(not_expert):
     del demos_all[i]
+demos_all = np.array(demos_all)
+# norm
+demos_all_normed = (demos_all / np.expand_dims(np.linalg.norm(demos_all,axis=1), axis=1))
 re_split_demos(demos_all=demos_all)
+# random_split_demo(demos=demos_all)
 
-for i in range(len(args.test_demo_files)):
-    demos_single, init_obs_single = load_demos(args.test_demo_files[i:i+1], args.ratio)
-    test_demos.append(demos_single) # 4 * 50 * 1000 * 18
-    test_init_obs.append(init_obs_single) # 4 * 0?
-pdb.set_trace()
+
+# kmeans = KMeans(n_clusters=4, random_state=0).fit(demos_all)
+# print(kmeans.labels_)
+# pdb.set_trace()
+# for i in range(len(args.test_demo_files)):
+#     demos_single, init_obs_single = load_demos(args.test_demo_files[i:i+1], args.ratio)
+#     test_demos.append(demos_single) # 4 * 50 * 1000 * 18
+#     test_init_obs.append(init_obs_single) # 4 * 0?
+# pdb.set_trace()

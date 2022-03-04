@@ -1,7 +1,8 @@
 import argparse
 from itertools import count
 import pdb
-
+from logger import *
+import json
 import gym
 import scipy.optimize
 
@@ -56,6 +57,8 @@ parser.add_argument('--log-interval', type=int, default=1, metavar='N',
 parser.add_argument('--xml', type=str, default='', metavar='N',
                     help='xml of env')
 args = parser.parse_args()
+logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0] + '_train_expert')
+json.dump(vars(args), logger.get_args_file(), sort_keys=True, indent=4)
 
 env = gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False)
 

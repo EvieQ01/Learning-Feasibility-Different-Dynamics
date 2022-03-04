@@ -91,15 +91,44 @@ parser.add_argument('--save_path', help='the path to save model')
 parser.add_argument('--feasibility_model', default=None, help='the path to the feasibility model')
 parser.add_argument('--mode', help='the mode of feasibility')
 parser.add_argument('--discount', type=float, default=0.9, help='the discount factor')
+parser.add_argument('--n_domains', type=int, default=4, help='the number of domains')
 parser.add_argument('--algo', default='sac', help='the algorithm of RL')
 args = parser.parse_args()
+from tensorboardX import SummaryWriter
+from logger import *
+import json
+import copy
+# re-define datasets
+if args.mode == 'resplit':
+    print("=> Use re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_{}_batch_00.pkl'.format(i))
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+elif args.mode == 'random-split':
+    print("=> Use random re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_random_{}_batch_00.pkl'.format(i))
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+elif args.mode == 'resplit-far':
+    print("=> Use far re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_far_{}_batch_00.pkl'.format(i))
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0] + '_gail_' + str(len(args.demo_files))+args.mode)
+writer=SummaryWriter(log_dir=logger.root + '/runs')
+
+json.dump(vars(args), logger.get_args_file(), sort_keys=True, indent=4)
+
 
 if args.seed == 1111:
     log_file = open('log/'+args.save_path.split('/')[-1].split('.pth')[0]+'.txt', 'w')
-    save_path = args.save_path
+    save_path = logger.get_checkpoint_path('seed_{}_gail_model'.format(args.seed))
 else:
     log_file = open('log/'+args.save_path.split('/')[-1].split('.pth')[0]+'_seed_{}.txt'.format(args.seed), 'w')
-    save_path = args.save_path.replace('.pth', '_seed_{}.pth'.format(args.seed))
+    save_path = logger.get_checkpoint_path('seed_{}_gail_model'.format(args.seed))
 
 
 if 'Swimmer' in args.env_name or 'Walker' in args.env_name or 'HalfCheetah' in args.env_name:
@@ -123,9 +152,14 @@ def load_demos(demo_files, ratios):
         state_pairs = []
         demo_file = demo_files[i]
         raw_demos = pickle.load(open(demo_file, 'rb'))
-        use_num = int(len(raw_demos['obs'])*ratios[i])
+        use_num = int(len(raw_demos['obs'])*ratios[0])
         current_state = raw_demos['obs'][0:use_num]
-        next_state = raw_demos['next_obs'][0:use_num]
+        # pdb.set_trace()
+        # if 'next_obs' in raw_demos:
+        #     next_state = raw_demos['next_obs'][0:use_num]
+        # else:
+        #     next_state = raw_demos['obs'][0:use_num][1:,:]
+        #     current_state = raw_demos['obs'][0:use_num][:-1,:]
         # s_t0, s_t1, s_t2, ...
         trajs += [np.array(traj) for traj in current_state]
         if 'InvertedDoublePendulum' in str(type(env.env)):
@@ -133,11 +167,15 @@ def load_demos(demo_files, ratios):
         # 0 0 0 ..., 1 1 1, ..., 2,2,2, ...
         traj_traj_id += [i]*len(current_state)
         for j in range(len(current_state)):
+            current_state[j] = np.array(current_state[j])
             if 'Ant' in args.env_name:
                 state_pairs.append(np.concatenate([np.array(current_state[j])[:,2:], np.array(next_state[j])[:,2:]], axis=1))
                 pair_traj_id.append(np.array([traj_id]*np.array(current_state[j]).shape[0]))
-            else:
-                state_pairs.append(np.concatenate([np.array(current_state[j]), np.array(next_state[j])], axis=1))
+            # elif 'next_obs' in raw_demos:
+            #     state_pairs.append(np.concatenate([np.array(current_state[j]), np.array(next_state[j])], axis=1))
+            #     pair_traj_id.append(np.array([traj_id]*np.array(current_state[j]).shape[0]))
+            else :
+                state_pairs.append(np.concatenate([np.array(current_state[j][:-1, :]), np.array(current_state[j][1:, :])], axis=1))
                 pair_traj_id.append(np.array([traj_id]*np.array(current_state[j]).shape[0]))
             traj_id += 1
         state_files.append(np.concatenate(state_pairs, axis=0))
@@ -195,6 +233,7 @@ def compute_feasibility_traj(expert_trajs, traj_traj_id, models, f_env, init_obs
                 state = next_state
                 # discounted L2-loss as distance
                 all_distance[-1].append(np.linalg.norm(expert_traj[j+1] - next_state, ord=2, axis=0)*(args.discount**j))
+        # pdb.set_trace()
         all_distance[-1] = np.sum(all_distance[-1])
     all_distance = np.array(all_distance)
     all_distance = (all_distance + np.max(-all_distance))/5.
@@ -205,19 +244,20 @@ def compute_feasibility_traj(expert_trajs, traj_traj_id, models, f_env, init_obs
 if args.feasibility_model is not None:
     expert_pairs, expert_trajs, pair_traj_id, traj_traj_id, init_obs = load_demos(args.demo_files, args.ratios)
     agents = []
-    model_dict = torch.load(args.feasibility_model)
+    model_dict = torch.load(logger.get_checkpoint_path('seed_543model').replace('gail_', '').replace('CustomWalker2d','CustomWalker2dFeasibility'))
     print(model_dict.keys())
-    pdb.set_trace()
+    # pdb.set_trace()
     for i in range(len(model_dict)):
         agents.append(model_dict['policy_'+str(i)])
     feasibility_traj = compute_feasibility_traj(expert_trajs, traj_traj_id, agents, f_env, init_obs)
     feasibility = feasibility_traj[pair_traj_id]
+    # pdb.set_trace()
 else:
-    expert_pairs, _, _, _ = load_demos(args.demo_files, args.ratios)
+    expert_pairs = load_demos(args.demo_files, args.ratios)[0]
     feasibility = np.ones(sum([expert_traj.shape[0] for expert_traj in expert_pairs]))
 expert_traj = np.concatenate(expert_pairs, axis=0)
 
-policy_net = Policy(num_inputs, num_actions, args.hidden_dim)
+policy_net = Policy(num_inputs, num_actions, args.hidden_dim).to(device)
 value_net = Value(num_inputs, args.hidden_dim).to(device)
 discriminator = Discriminator(num_inputs + num_inputs, args.hidden_dim).to(device)
 disc_criterion = nn.BCEWithLogitsLoss()
@@ -320,7 +360,7 @@ def evaluate(episode, best_reward, log_file):
     if best_reward < avg_reward / args.eval_epochs:
         best_reward = avg_reward / args.eval_epochs
         torch.save({'policy':policy_net.state_dict(), 'value':value_net.state_dict(), 'rew':best_reward}, save_path)
-pdb.set_trace()
+# pdb.set_trace()
 all_idx = np.arange(0, expert_traj.shape[0])
 p_idx = np.random.permutation(expert_traj.shape[0])
 expert_traj = expert_traj[p_idx, :]
@@ -415,3 +455,5 @@ for i_episode in range(args.num_epochs):
         print('Episode {}\tAverage reward: {:.2f}\tMax reward: {:.2f}\tLoss (disc): {:.2f}'.format(i_episode, np.mean(reward_batch), max(reward_batch), disc_loss.item()))
         log_file.write('Episode {}\tAverage reward: {:.2f}\tMax reward: {:.2f}\tLoss (disc): {:.2f}\n'.format(i_episode, np.mean(reward_batch), max(reward_batch), disc_loss.item()))
         log_file.flush()
+        writer.add_scalar('gail/loss{}', disc_loss.item(), i_episode)
+        writer.add_scalar('gail/reward{}', np.mean(reward_batch), i_episode)

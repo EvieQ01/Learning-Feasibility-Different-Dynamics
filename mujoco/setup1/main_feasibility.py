@@ -20,6 +20,7 @@ import numpy as np
 import pickle
 import random
 import copy
+from tensorboardX import SummaryWriter
 
 # import ant
 # import swimmer
@@ -56,16 +57,66 @@ parser.add_argument('--test_demo_files', nargs='+')
 parser.add_argument('--ratio', type=float, nargs='+')
 parser.add_argument('--eval-interval', type=int, default=1000)
 parser.add_argument('--restore_model', default=None)
-parser.add_argument('--mode')
+parser.add_argument('--mode', default=None)
 parser.add_argument('--discount', type=float, default=0.9)
 parser.add_argument('--discount_train', action='store_true')
 parser.add_argument('--fixed_train', action='store_true')
 parser.add_argument('--algo', default='sac', help='the algorithm of RL')
 parser.add_argument('--max_steps', type=int, default=int(1e6), help='the maximum number of steps')
 parser.add_argument('--start_training', type=int, default=int(1e4), help='Number of training steps to start training.')
+parser.add_argument('--n_domains', type=int, default=5, help='Number of resplit-domains')
 args = parser.parse_args()
-logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0])
+# re-define datasets
+if args.mode == 'resplit':
+    print("=> Use re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_{}_batch_00.pkl'.format(i)+args.mode)
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+elif args.mode == 'random-split':
+    print("=> Use random re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_random_{}_batch_00.pkl'.format(i)+args.mode)
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+elif args.mode == 'resplit-far':
+    print("=> Use far re-split datasets x{}".format(args.n_domains))
+    args.demo_files = []
+    for i in range(args.n_domains):
+        args.demo_files.append('../demo/'+ os.path.splitext(args.xml)[0] + '/re_split_far_{}_batch_00.pkl'.format(i))
+    args.test_demo_files = copy.deepcopy(args.demo_files)
+logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0] + '_' + str(len(args.demo_files))+args.mode)
+writer=SummaryWriter(log_dir=logger.root + '/runs')
+
 json.dump(vars(args), logger.get_args_file(), sort_keys=True, indent=4)
+def evaluate_pair_between(trajs1, trajs2):
+    look_1 = np.expand_dims(np.array(trajs1), axis=0) # 1 * a * 1000 * 18
+    look_2 = np.expand_dims(np.array(trajs2), axis=1) # b * 1 * 1000 * 18
+    dist_matrix = np.linalg.norm(look_1 - look_2, axis=-1)  # 
+    dist_matrix = np.mean(dist_matrix, axis=-1) # b * a
+    # dist_matrix[np.arange(dist_matrix.shape[0]), np.arange(dist_matrix.shape[0])] = 10000 
+    print('min_between_traj: ', np.min(dist_matrix))
+    print('max_between_traj: ', np.max(dist_matrix))
+
+def load_far_pairs(trajs1, trajs2, idx=0, topk=5):
+    # look_1 = np.expand_dims(np.expand_dims(trajs1[idx], axis=0)) # 1 * 1 * 1000 * 18
+    # look_2 = np.expand_dims(np.array(trajs2), axis=1) # b * 1 * 1000 * 18
+    pdb.set_trace()
+    dist_matrix = np.linalg.norm(trajs1[idx] - np.array(trajs2), axis=-1)  # 
+    dist_matrix = np.mean(dist_matrix, axis=-1) # b * a
+    # get max
+    max_idx = np.argmax(dist_matrix)
+    v, max_idx =  torch.topk(torch.from_numpy(dist_matrix), k=topk)
+    print('max_between_traj to {}: {}, id:{} '.format(idx, v, max_idx))
+    # get min
+    dist_matrix[idx] = 10000.
+    min_idx = np.argmin(dist_matrix)
+    v, min_idx =  torch.topk(torch.from_numpy(-dist_matrix), k=topk)
+    print('min_between_traj to {}: {}, id:{}'.format(idx, v,min_idx))
+    # return trajs2[max_idx], trajs2[min_idx] 
+    return [trajs2[i] for i in max_idx], [trajs2[i] for i in min_idx]
+
+
 
 def load_demos(demo_files, ratio):
     all_demos = []
@@ -76,6 +127,8 @@ def load_demos(demo_files, ratio):
         all_demos = all_demos + raw_demos['obs'][:use_num]
         if 'init_obs' in raw_demos:
             all_init_obs = all_init_obs + raw_demos['init_obs'][:use_num]
+            print("=>set init obs.")
+    print("=>load demos size:", len(all_demos))
     return all_demos, all_init_obs
 
 def load_pairs(demo_files, ratio):
@@ -88,25 +141,45 @@ def load_pairs(demo_files, ratio):
             all_pairs.append(np.reshape(np.concatenate([obs, next_obs], axis=1), (obs.shape[0], 2, -1)))
     return np.concatenate(all_pairs, axis=0)
 
-#demos = load_demos(args.demo_file)
+# make demos and test_demos:
 if args.mode == 'pair':
-    demos = [load_pairs(args.demo_files[i:i+1], args.ratio[i]) for i in range(len(args.test_demo_files))]
-elif args.mode == 'traj':
+    demos = [load_pairs(args.demo_files[i:i+1], args.ratio[0]) for i in range(len(args.test_demo_files))]
+elif args.mode == 'test':
+    demos = [[], []] # max, min
+    # for idx in range(5):
+    idx = 0
+    demos_single, init_obs_single = load_demos(args.demo_files[0:1], args.ratio[0])
+    # norm
+    demos_all_normed = (np.array(demos_single) / np.expand_dims(np.linalg.norm(np.array(demos_single),axis=1), axis=1))
+    max_demo, min_demo = load_far_pairs(demos_all_normed, demos_all_normed, idx=idx)
+    demos[0].append(demos_single[idx])
+    demos[1].append(demos_single[idx])
+    for i in range(len(max_demo)):
+        demos[0].append(max_demo[i])
+        demos[1].append(min_demo[i])
+    test_demos = copy.deepcopy(demos)
+    test_init_obs = [[]] * len(demos)
+    args.demo_files *= 2
+else:
     demos = []
     init_obs = []
     # pdb.set_trace()
     for i in range(len(args.test_demo_files)):
-        demos_single, init_obs_single = load_demos(args.demo_files[i:i+1], args.ratio[i])
+        demos_single, init_obs_single = load_demos(args.demo_files[i:i+1], args.ratio[0])
         demos.append(demos_single)
         init_obs.append(init_obs_single)
-test_demos = []
-test_init_obs = []
-for i in range(len(args.test_demo_files)): # 4
-    # pdb.set_trace()
-    demos_single, init_obs_single = load_demos(args.test_demo_files[i:i+1], args.ratio[i])
-    test_demos.append(demos_single) # 4 * 50 * 1000 * 18
-    test_init_obs.append(init_obs_single) # 4 * 0?
+if args.mode != 'test':
+    test_demos = []
+    test_init_obs = []
+    for i in range(len(args.test_demo_files)): # 4
+        # pdb.set_trace()
+        demos_single, init_obs_single = load_demos(args.test_demo_files[i:i+1], args.ratio[0])
+        test_demos.append(demos_single) # 4 * 50 * 1000 * 18
+        test_init_obs.append(init_obs_single) # 4 * 0?
 # pdb.set_trace()
+# for test
+    
+# make envs
 if 'Ant' in args.env_name or 'Swimmer' in args.env_name or 'Walker' in args.env_name or 'HalfCheetah' in args.env_name:
     env_list = [gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False, demos=demos[i]) for i in range(len(args.demo_files))]
     test_env = gym.make(args.env_name, xml_file=args.xml, exclude_current_positions_from_observation=False, demos=demos[0][0:3]) # demos[0:3]?
@@ -190,7 +263,7 @@ def evaluate(test_demos, agents, test_env, best_reward_list, num_episode, test_i
                     test_reward += reward
                     state = test_demos[test_demo_id][ii][test_env.step_]
                     test_env.set_observation(state)
-                elif args.mode == 'traj':
+                else:
                     test_reward += reward * (args.discount**step_id)
                     state = next_state
                 step_id += 1
@@ -217,8 +290,8 @@ for j in range(len(demos)):
     done_list.append(done)
     step_id_list.append(0)
     state0_list.append(observation)
-reward_eval_all = [[], [], [], []]
-reward_sum = [0.] * 4
+reward_eval_all = [[]] * len(args.demo_files)
+reward_sum = [0.] * len(args.demo_files)
 for i in range(1, args.max_steps + 1):
     # reward_sum = 0
     for j in range(len(demos)):
@@ -257,22 +330,30 @@ for i in range(1, args.max_steps + 1):
         if i >= args.start_training:
             batch = replay_buffer_list[j].sample(args.batch_size)
             update_info = agents[j].update(batch)
-
+    num_episode = 10 if args.mode != 'test' else 1
     if i % args.eval_interval == 0 and i >= args.start_training:
         print("step [{}]:".format(i))
-        r = evaluate(test_demos, agents, test_env, best_reward_list, 10, test_init_obs)
-        for i in range(len(demos)):
-            reward_eval_all[i].append(r[i])
-        print('reward_all[0]: ',reward_eval_all[0])
-        plt.figure(figsize=(6,6), dpi=80)
-        plt.figure(1)
-        ax1 = plt.subplot(221)
-        plt.plot(reward_eval_all[0], color="r",linestyle = "--")
-        ax2 = plt.subplot(222)
-        plt.plot(reward_eval_all[1],color="y",linestyle = "-")
-        ax3 = plt.subplot(223)
-        plt.plot(reward_eval_all[2],color="g",linestyle = "-.")
-        ax4 = plt.subplot(224)
-        plt.plot(reward_eval_all[3],color="b",linestyle = ":")
-        plt.savefig(logger.get_image_path("reward_curve.png"))
+        r = evaluate(test_demos, agents, test_env, best_reward_list, num_episode, test_init_obs)
+        for j in range(len(demos)):
+            # reward_eval_all[j].append(r[j])
+            print('reward_all[{}]: {}'.format(j, r[j]))
+            if args.mode == 'test':
+                toy = 'far' if j == 0 else 'near'
+                writer.add_scalar('reward/toy_{}'.format(toy), r[j], i)
+            else:
+                writer.add_scalar('reward/clusterID_{}'.format(j), r[j], i)
+            # writer.add_scalar('reward/test_fit{}'.format(j), r[j], i)
+        # plt.figure(figsize=(6,6), dpi=80)
+        # plt.figure(1)
+        # ax1 = plt.subplot(231)
+        # plt.plot(reward_eval_all[0], color="r",linestyle = "--")
+        # ax2 = plt.subplot(232)
+        # plt.plot(reward_eval_all[1],color="y",linestyle = "--")
+        # ax3 = plt.subplot(233)
+        # plt.plot(reward_eval_all[2],color="g",linestyle = "--")
+        # ax4 = plt.subplot(234)
+        # plt.plot(reward_eval_all[3],color="b",linestyle = "--")
+        # ax5 = plt.subplot(235)
+        # plt.plot(reward_eval_all[4],color="r",linestyle = "--")
+        # plt.savefig(logger.get_image_path("reward_curve.png"))
 logger.close()

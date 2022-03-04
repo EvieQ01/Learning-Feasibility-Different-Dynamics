@@ -1,6 +1,8 @@
 # import free_mjc
 import pdb
 import sys
+from logger import *
+import json
 sys.path.append('../all_envs')
 import swimmer
 import walker
@@ -43,6 +45,8 @@ parser.add_argument('--dump', default=False, action='store_true')
 parser.add_argument('--xml', type=str, default='', metavar='N',
                     help='xml of env')
 args = parser.parse_args()
+logger = CompleteLogger('log/'+ args.env_name + '/'+ os.path.splitext(args.xml)[0] + '_save_traj')
+json.dump(vars(args), logger.get_args_file(), sort_keys=True, indent=4)
 
 # creat envs
 dtype = torch.float32
@@ -58,10 +62,13 @@ print('state dim:', state_dim)
 print('action dim:', num_actions)
 
 # load models
-save_demo_path = '../demo/' + os.path.splitext(args.xml)[0]  + '/batch_00.pkl'
+save_demo_dir = '../demo/' + os.path.splitext(args.xml)[0]
+save_demo_path = '../demo/' + os.path.splitext(args.xml)[0]  + '/batch_00_test.pkl'
+if not os.path.exists(save_demo_dir):
+    os.mkdir(save_demo_dir)
 save_path = '../checkpoints/' + os.path.splitext(args.xml)[0]  + '_model.pth'
 policy_net = Policy(num_inputs, num_actions)
-pdb.set_trace()
+# pdb.set_trace()
 # policy_net.to(dtype)
 state_dict =  torch.load(save_path, map_location='cpu')
 policy_net.load_state_dict(state_dict)
